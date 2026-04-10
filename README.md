@@ -70,4 +70,4 @@ README.md         ← File này
 
 ---
 
-*Được tạo với ❤️ — chạy tốt trên Chrome, Safari, Firefox, Edge.*
+*Được tạo bởi Oops Hano — chạy tốt trên Chrome, Safari, Firefox, Edge.*
