@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Đua Xe – Brick Game</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  :root {
+    --bg:  #9bbc0f;
+    --on:  #0f380f;
+    --mid: #306230;
+    --dim: #8bac0f;
+  }
+  html,body { width:100%; height:100%; overflow:hidden; background:#000; font-family:'Press Start 2P',monospace; }
+
+  canvas { position:fixed; top:0; left:0; width:100%; height:100%; display:block; image-rendering:pixelated; }
+
+  /* HUD */
+  #hud {
+    position:fixed; top:0; left:0; right:0;
+    display:flex; justify-content:space-between;
+    padding:10px 20px 8px;
+    font-size:11px; color:var(--on); z-index:10;
+    pointer-events:none; line-height:1.9;
+  }
+
+  /* OVERLAY */
+  #overlay {
+    position:fixed; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:22px;
+    background:rgba(155,188,15,0.93);
+    z-index:30; text-align:center; padding:30px;
+  }
+  #overlay h1 { font-size:28px; color:var(--on); line-height:1.5; letter-spacing:3px; }
+  #overlay p  { font-size:11px; color:var(--mid); line-height:2.4; }
+  #overlay .sbtn {
+    margin-top:8px; padding:18px 44px;
+    font-family:'Press Start 2P',monospace; font-size:14px;
+    background:var(--on); color:var(--bg);
+    border:none; border-radius:10px; cursor:pointer;
+    letter-spacing:2px; box-shadow:0 7px 0 #061a06;
+    transition:transform .1s,box-shadow .1s; touch-action:manipulation;
+  }
+  #overlay .sbtn:active { transform:translateY(5px); box-shadow:0 2px 0 #061a06; }
+  #overlay.hidden { display:none; }
+
+  /* PAUSE */
+  #pauseLabel {
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    font-size:18px; color:var(--on); z-index:20; display:none;
+    background:rgba(155,188,15,0.88); padding:16px 28px; border-radius:8px;
+    animation:blink 1s step-end infinite;
+  }
+  @keyframes blink{ 50%{opacity:0;} }
+
+  /* CONTROLS */
+  #controls {
+    position:fixed; bottom:0; left:0; right:0; height:190px;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 28px 36px; z-index:10;
+  }
+  .ctrl-side { display:flex; gap:14px; }
+  .cbtn {
+    width:82px; height:82px; border-radius:50%; border:none;
+    background:rgba(15,56,15,0.68); color:var(--bg); font-size:32px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 6px 0 rgba(0,0,0,.55),inset 0 2px 4px rgba(255,255,255,.07),0 0 0 3px rgba(15,56,15,.32);
+    cursor:pointer; touch-action:manipulation;
+    transition:transform .08s,box-shadow .08s,background .1s;
+  }
+  .cbtn:active,.cbtn.active {
+    transform:translateY(5px) scale(0.93);
+    box-shadow:0 1px 0 rgba(0,0,0,.55),0 0 0 3px rgba(15,56,15,.32);
+    background:rgba(15,56,15,0.92);
+  }
+  .cbtn-pause {
+    width:60px; height:60px; border-radius:12px;
+    font-size:10px; font-family:'Press Start 2P',monospace; line-height:1.7;
+    background:rgba(15,56,15,0.48);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <span>SCORE<br><span id="scoreVal">0</span></span>
+  <span style="text-align:center">LV<br><span id="lvVal">1</span></span>
+  <span style="text-align:right">BEST<br><span id="hiVal">0</span></span>
+</div>
+
+<div id="overlay">
+  <h1>ĐUA XE</h1>
+  <p>TRÁNH XE NGƯỢC CHIỀU<br>CÀNG XA CÀNG NHANH<br><br>◀ ▶ ĐỂ LÁI</p>
+  <button class="sbtn" id="btnPlay">▶ BẮT ĐẦU</button>
+</div>
+
+<div id="pauseLabel">PAUSE</div>
+
+<div id="controls">
+  <div class="ctrl-side">
+    <button class="cbtn" id="btnLeft">◀</button>
+    <button class="cbtn" id="btnRight">▶</button>
+  </div>
+  <div class="ctrl-side">
+    <button class="cbtn cbtn-pause" id="btnPause">⏸<br>PAUSE</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  ĐUA XE – wider road, sparser enemies
+// ═══════════════════════════════════════════
+
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+
+// Grid: 14 columns for a wider road feel
+const COLS = 14, ROWS = 20;
+const GAP  = 1;
+let CELL = 20, OX = 0, OY = 0;
+const CTRL_H = 190, HUD_H = 52;
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const availH = canvas.height - CTRL_H - HUD_H;
+  const availW = canvas.width;
+  const cByH = Math.floor((availH - GAP) / ROWS - GAP);
+  const cByW = Math.floor((availW - GAP) / COLS - GAP);
+  CELL = Math.max(8, Math.min(cByH, cByW, 36));
+  const gW = COLS * (CELL + GAP) + GAP;
+  const gH = ROWS * (CELL + GAP) + GAP;
+  OX = Math.floor((canvas.width  - gW) / 2);
+  OY = HUD_H + Math.floor((canvas.height - CTRL_H - HUD_H - gH) / 2);
+}
+resize();
+window.addEventListener('resize', () => { resize(); if (!running) render(); });
+
+const C = { bg:'#9bbc0f', dim:'#8bac0f', mid:'#306230', on:'#0f380f' };
+
+// ── Road layout (14-col grid) ──────────────────
+// col 0,13 = grass/wall  col 1,12 = kerb
+// col 2-5 = left lane   col 6 = divider  col 7 = divider  col 8-11 = right lane
+const ROAD_LEFT  = 2;   // leftmost drivable col
+const ROAD_RIGHT = 11;  // rightmost drivable col
+
+// Car is 4 wide; player can be at col 2..7 (so col+3 ≤ 11)
+const PLAYER_MIN = ROAD_LEFT;
+const PLAYER_MAX = ROAD_RIGHT - 3;  // = 8
+
+// ── State ──────────────────────────────────────
+let score=0, hi=0, level=1;
+let running=false, paused=false;
+let frameId, lastTime=0, roadOffset=0;
+let playerCol = 5;   // start near center-left
+let enemies=[], enemyTimer=0;
+
+const CAR_W=4, CAR_H=5;
+
+const PLAYER_SHAPE=[
+  [0,1,1,0],
+  [1,1,1,1],
+  [0,1,1,0],
+  [1,1,1,1],
+  [0,1,1,0],
+];
+const ENEMY_SHAPE=[
+  [0,1,1,0],
+  [1,1,1,1],
+  [1,0,0,1],
+  [1,1,1,1],
+  [0,1,1,0],
+];
+
+// Enemy spawn lanes: left lane cols and right lane cols (4-wide cars)
+// Left lane: cols 2,3  Right lane: cols 7,8
+// Gaps between allow player to slip through
+const SPAWN_COLS = [2, 3, 7, 8];
+
+// HUD
+const $score=document.getElementById('scoreVal');
+const $hi   =document.getElementById('hiVal');
+const $lv   =document.getElementById('lvVal');
+const overlay   =document.getElementById('overlay');
+const pauseLabel=document.getElementById('pauseLabel');
+function updateHUD(){ $score.textContent=score; $hi.textContent=hi; $lv.textContent=level; }
+
+// ── Render helpers ──────────────────────────────
+function cx(c){ return OX + GAP + c*(CELL+GAP); }
+function cy(r){ return OY + GAP + r*(CELL+GAP); }
+
+function fillCell(c,r,col){
+  if(c<0||c>=COLS||r<0||r>=ROWS) return;
+  ctx.fillStyle=col; ctx.fillRect(cx(c),cy(r),CELL,CELL);
+}
+
+function drawGrid(){
+  ctx.fillStyle=C.bg; ctx.fillRect(0,0,canvas.width,canvas.height);
+  // subtle scanlines
+  ctx.fillStyle='rgba(0,0,0,0.03)';
+  for(let y=0;y<canvas.height;y+=4) ctx.fillRect(0,y,canvas.width,1);
+  // dim cells
+  ctx.fillStyle=C.dim;
+  for(let r=0;r<ROWS;r++)
+    for(let c=0;c<COLS;c++)
+      ctx.fillRect(cx(c),cy(r),CELL,CELL);
+}
+
+function drawRoad(off){
+  // outer grass columns (0,1 and 12,13)
+  for(let r=0;r<ROWS;r++){
+    fillCell(0,r,C.mid); fillCell(1,r,C.mid);
+    fillCell(12,r,C.mid); fillCell(13,r,C.mid);
+  }
+  // center divider dashes (cols 6 & 7 share a narrow strip)
+  const dL=3, tot=6;
+  for(let r=0;r<ROWS;r++){
+    const ph=((r+off*tot)%tot+tot)%tot;
+    if(ph<dL){
+      fillCell(6,r,C.mid);
+      fillCell(7,r,C.mid);
+    }
+  }
+}
+
+function drawCar(col,row,shape,color){
+  const ri=Math.round(row);
+  for(let pr=0;pr<shape.length;pr++)
+    for(let pc=0;pc<shape[pr].length;pc++)
+      if(shape[pr][pc]) fillCell(col+pc,ri+pr,color);
+}
+
+function render(){
+  drawGrid();
+  drawRoad(roadOffset);
+  for(const e of enemies) drawCar(e.col,e.row,ENEMY_SHAPE,C.on);
+  drawCar(playerCol, ROWS-CAR_H-1, PLAYER_SHAPE, '#ffffff');
+}
+
+// ── Collision ───────────────────────────────────
+function collides(e){
+  const pRow=ROWS-CAR_H-1, eRow=Math.round(e.row);
+  if(eRow+CAR_H<=pRow||eRow>=pRow+CAR_H) return false;
+  if(e.col+CAR_W<=playerCol||e.col>=playerCol+CAR_W) return false;
+  for(let r=0;r<CAR_H;r++) for(let c=0;c<CAR_W;c++){
+    if(!ENEMY_SHAPE[r]?.[c]) continue;
+    const pr=eRow+r-pRow, pc=e.col+c-playerCol;
+    if(pr>=0&&pr<CAR_H&&pc>=0&&pc<CAR_W&&PLAYER_SHAPE[pr]?.[pc]) return true;
+  }
+  return false;
+}
+
+// ── Spawn logic ─────────────────────────────────
+// Never spawn two enemies that block the entire road at the same y-band.
+// Strategy: pick ONE lane side (left or right), and within that side pick a col.
+// Alternate sides so player always has room to dodge.
+let lastSpawnSide = -1; // 0=left, 1=right
+
+function spawnEnemy(){
+  // Don't spawn if there's already an enemy near the very top (avoid pile-up)
+  if(enemies.some(e => e.row < 3)) return;
+
+  // Alternate sides to guarantee a gap
+  let side;
+  if(lastSpawnSide === -1){
+    side = Math.random() < 0.5 ? 0 : 1;
+  } else {
+    // 70% chance to alternate, 30% same side (same side = wide gap on other side)
+    side = Math.random() < 0.70 ? 1 - lastSpawnSide : lastSpawnSide;
+  }
+  lastSpawnSide = side;
+
+  let col;
+  if(side === 0){
+    // left lane: col 2 or 3
+    col = Math.random() < 0.5 ? 2 : 3;
+  } else {
+    // right lane: col 7 or 8
+    col = Math.random() < 0.5 ? 7 : 8;
+  }
+
+  enemies.push({ col, row: -CAR_H });
+}
+
+// ── Speed & timing ──────────────────────────────
+let elapsed = 0; // tổng thời gian chơi (giây)
+function spd(){ return 2.5 + elapsed * 0.018; }  // tăng dần liên tục ~+1 sau 55 giây
+function spawnInterval(){ return Math.max(1.3, 2.8 - elapsed * 0.008); }
+
+// ── Game loop ───────────────────────────────────
+function loop(ts){
+  if(!running||paused) return;
+  const dt=Math.min((ts-lastTime)/1000,0.05);
+  lastTime=ts;
+
+  elapsed += dt;
+  level = 1 + Math.floor(elapsed / 30); // level tăng mỗi 30 giây (chỉ để hiển thị HUD)
+  const s=spd();
+  roadOffset=(roadOffset+s*dt/ROWS+1)%1;
+  for(const e of enemies) e.row+=s*dt;
+
+  enemies=enemies.filter(e=>{
+    if(e.row>ROWS){
+      score+=10; if(score>hi) hi=score;
+      updateHUD(); return false;
+    }
+    return true;
+  });
+
+  enemyTimer+=dt;
+  if(enemyTimer>=spawnInterval()){ enemyTimer=0; spawnEnemy(); }
+
+  for(const e of enemies) if(collides(e)){ gameOver(); return; }
+
+  render();
+  frameId=requestAnimationFrame(loop);
+}
+
+// ── Input ───────────────────────────────────────
+function moveL(){ if(running&&!paused&&playerCol>PLAYER_MIN) playerCol--; }
+function moveR(){ if(running&&!paused&&playerCol<PLAYER_MAX) playerCol++; }
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft' ||e.key==='a') moveL();
+  if(e.key==='ArrowRight'||e.key==='d') moveR();
+  if(e.key==='Escape'    ||e.key==='p') togglePause();
+  if(e.key==='Enter'&&!running) startGame();
+});
+
+function holdBtn(btn,fn){
+  let iv=null;
+  btn.addEventListener('pointerdown',ev=>{ ev.preventDefault(); btn.classList.add('active'); fn(); iv=setInterval(fn,100); });
+  const stop=()=>{ btn.classList.remove('active'); clearInterval(iv); iv=null; };
+  btn.addEventListener('pointerup',stop);
+  btn.addEventListener('pointerleave',stop);
+  btn.addEventListener('pointercancel',stop);
+}
+holdBtn(document.getElementById('btnLeft'),  moveL);
+holdBtn(document.getElementById('btnRight'), moveR);
+document.getElementById('btnPause').addEventListener('click',togglePause);
+document.getElementById('btnPlay').addEventListener('click',startGame);
+
+// ── State transitions ────────────────────────────
+function startGame(){
+  score=0; level=1; elapsed=0; playerCol=5;
+  enemies=[]; enemyTimer=0; roadOffset=0; lastSpawnSide=-1;
+  updateHUD();
+  overlay.classList.add('hidden');
+  pauseLabel.style.display='none';
+  running=true; paused=false;
+  lastTime=performance.now();
+  frameId=requestAnimationFrame(loop);
+}
+
+function gameOver(){
+  running=false; cancelAnimationFrame(frameId);
+  if(score>hi) hi=score;
+  updateHUD(); render();
+  overlay.innerHTML=`
+    <h1>GAME<br>OVER</h1>
+    <p>ĐIỂM CỦA BẠN<br>${score}<br><br>CAO NHẤT: ${hi}<br>CẤP ĐỘ: ${level}</p>
+    <button class="sbtn" id="btnPlay">▶ CHƠI LẠI</button>
+  `;
+  overlay.classList.remove('hidden');
+  document.getElementById('btnPlay').addEventListener('click',startGame);
+}
+
+function togglePause(){
+  if(!running) return;
+  paused=!paused;
+  pauseLabel.style.display=paused?'block':'none';
+  if(!paused){ lastTime=performance.now(); frameId=requestAnimationFrame(loop); }
+}
+
+render(); updateHUD();
+</script>
+</body>
+</html>
